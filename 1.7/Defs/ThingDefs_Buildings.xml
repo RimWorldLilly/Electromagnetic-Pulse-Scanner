@@ -47,7 +47,7 @@
       <Mass>60</Mass>
     </statBases>
     <hasInteractionCell>true</hasInteractionCell>
-    <interactionCellOffset>(0,0,2)</interactionCellOffset>
+    <interactionCellOffset>(0,0,1)</interactionCellOffset>
     <interactionCellIcon>DiningChair</interactionCellIcon>
     <interactionCellIconReverse>true</interactionCellIconReverse>
     <fillPercent>0.40</fillPercent>
@@ -57,7 +57,7 @@
     <designationCategory>Misc</designationCategory>
     <rotatable>true</rotatable>
     <canOverlapZones>false</canOverlapZones>
-    <size>(3,3)</size>
+    <size>(1,1)</size>
     <terrainAffordanceNeeded>Heavy</terrainAffordanceNeeded>
     <placeWorkers>
       <li>PlaceWorker_PreventInteractionSpotOverlap</li>
