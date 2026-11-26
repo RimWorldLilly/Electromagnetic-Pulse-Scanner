@@ -19,6 +19,12 @@ namespace ElectromagneticPulseGenerator
         private List<List<IntVec3>> oreDeposits = new List<List<IntVec3>>();
         private List<List<IntVec3>> revealedDeposits = new List<List<IntVec3>>();
         private List<List<IntVec3>> unrevealedDeposits = new List<List<IntVec3>>();
+        private readonly List<List<IntVec3>> incrementalScanDeposits = new List<List<IntVec3>>();
+        private readonly HashSet<IntVec3> incrementalScanVisited = new HashSet<IntVec3>();
+        private List<IntVec3> savedRevealedDepositCells = new List<IntVec3>();
+        private List<int> savedRevealedDepositSizes = new List<int>();
+        private List<IntVec3> savedUnrevealedDepositCells = new List<IntVec3>();
+        private List<int> savedUnrevealedDepositSizes = new List<int>();
         private bool scanned = false;
         private bool autoMineEnabled = false;
 
@@ -29,9 +35,81 @@ namespace ElectromagneticPulseGenerator
             Scribe_Values.Look<bool>(ref scanned, "scanned", false);
             Scribe_Values.Look<bool>(ref autoMineEnabled, "autoMineEnabled", false);
 
-            // Save revealed and unrevealed deposits as lists of cell lists
-            Scribe_Collections.Look(ref revealedDeposits, "revealedDeposits", LookMode.Value);
-            Scribe_Collections.Look(ref unrevealedDeposits, "unrevealedDeposits", LookMode.Value);
+            // Serialize nested deposit lists as flat cell arrays plus per-deposit lengths.
+            // LookMode.Value is valid for IntVec3 and int, but not for List<IntVec3>.
+            if (Scribe.mode == LoadSaveMode.Saving)
+            {
+                FlattenDeposits(revealedDeposits, ref savedRevealedDepositCells, ref savedRevealedDepositSizes);
+                FlattenDeposits(unrevealedDeposits, ref savedUnrevealedDepositCells, ref savedUnrevealedDepositSizes);
+            }
+
+            Scribe_Collections.Look(ref savedRevealedDepositCells, "revealedDepositCells", LookMode.Value);
+            Scribe_Collections.Look(ref savedRevealedDepositSizes, "revealedDepositSizes", LookMode.Value);
+            Scribe_Collections.Look(ref savedUnrevealedDepositCells, "unrevealedDepositCells", LookMode.Value);
+            Scribe_Collections.Look(ref savedUnrevealedDepositSizes, "unrevealedDepositSizes", LookMode.Value);
+
+            if (Scribe.mode == LoadSaveMode.LoadingVars)
+            {
+                revealedDeposits = RestoreDeposits(savedRevealedDepositCells, savedRevealedDepositSizes);
+                unrevealedDeposits = RestoreDeposits(savedUnrevealedDepositCells, savedUnrevealedDepositSizes);
+                if (revealedDeposits == null) revealedDeposits = new List<List<IntVec3>>();
+                if (unrevealedDeposits == null) unrevealedDeposits = new List<List<IntVec3>>();
+                if (oreDeposits == null) oreDeposits = new List<List<IntVec3>>();
+                oreDeposits.Clear();
+                oreDeposits.AddRange(revealedDeposits);
+                oreDeposits.AddRange(unrevealedDeposits);
+                incrementalScanDeposits.Clear();
+                incrementalScanVisited.Clear();
+                scanIndex = 0;
+            }
+        }
+
+        private static void FlattenDeposits(
+            List<List<IntVec3>> deposits,
+            ref List<IntVec3> cells,
+            ref List<int> sizes)
+        {
+            if (cells == null) cells = new List<IntVec3>();
+            if (sizes == null) sizes = new List<int>();
+            cells.Clear();
+            sizes.Clear();
+
+            if (deposits == null) return;
+            foreach (List<IntVec3> deposit in deposits)
+            {
+                if (deposit == null || deposit.Count == 0) continue;
+                sizes.Add(deposit.Count);
+                cells.AddRange(deposit);
+            }
+        }
+
+        private static List<List<IntVec3>> RestoreDeposits(
+            List<IntVec3> cells,
+            List<int> sizes)
+        {
+            List<List<IntVec3>> deposits = new List<List<IntVec3>>();
+            if (cells == null || sizes == null) return deposits;
+
+            int offset = 0;
+            foreach (int size in sizes)
+            {
+                if (size <= 0 || offset + size > cells.Count)
+                {
+                    deposits.Clear();
+                    return deposits;
+                }
+
+                List<IntVec3> deposit = new List<IntVec3>(size);
+                for (int i = 0; i < size; i++)
+                    deposit.Add(cells[offset + i]);
+                deposits.Add(deposit);
+                offset += size;
+            }
+
+            if (offset != cells.Count)
+                deposits.Clear();
+
+            return deposits;
         }
 
         public override void SpawnSetup(Map map, bool respawningAfterLoad)
@@ -39,13 +117,17 @@ namespace ElectromagneticPulseGenerator
             base.SpawnSetup(map, respawningAfterLoad);
             powerComp = GetComp<CompPowerTrader>();
 
-            // After loading, if deposits are present, reconstruct oreDeposits
-            if (revealedDeposits.Count + unrevealedDeposits.Count > 0)
-            {
-                oreDeposits.Clear();
-                oreDeposits.AddRange(revealedDeposits);
-                oreDeposits.AddRange(unrevealedDeposits);
-            }
+            // Rebuild derived collections after loading without changing discovery state.
+            if (revealedDeposits == null) revealedDeposits = new List<List<IntVec3>>();
+            if (unrevealedDeposits == null) unrevealedDeposits = new List<List<IntVec3>>();
+            if (oreDeposits == null) oreDeposits = new List<List<IntVec3>>();
+            oreDeposits.Clear();
+            oreDeposits.AddRange(revealedDeposits);
+            oreDeposits.AddRange(unrevealedDeposits);
+            incrementalScanDeposits.Clear();
+            incrementalScanVisited.Clear();
+            scanIndex = 0;
+            if (scanned && scanCooldown <= 0) scanCooldown = 5000;
         }
 
         protected override void Tick()
@@ -71,45 +153,76 @@ namespace ElectromagneticPulseGenerator
         }
 
         // Incremental scan for new deposits (scans 100 things per tick)
+        // Scan a bounded batch of things each tick, then merge the completed scan.
+        // Existing revealed deposits remain revealed across subsequent scan cycles.
         private void IncrementalScanForOres(Map map)
         {
             var allThings = map.listerThings.AllThings;
-            int batchSize = 100;
-            HashSet<IntVec3> visited = new HashSet<IntVec3>();
+            const int batchSize = 100;
+
             if (scanIndex == 0)
             {
-                oreCells.Clear();
-                revealedOreCells.Clear();
-                unrevealedOreCells.Clear();
-                oreDeposits.Clear();
-                revealedDeposits.Clear();
-                unrevealedDeposits.Clear();
+                incrementalScanDeposits.Clear();
+                incrementalScanVisited.Clear();
             }
+
             int end = Mathf.Min(scanIndex + batchSize, allThings.Count);
             for (int i = scanIndex; i < end; i++)
             {
-                var thing = allThings[i];
-                if (thing is Mineable && IsOre(thing.def))
-                {
-                    IntVec3 pos = thing.Position;
-                    if (!visited.Contains(pos))
-                    {
-                        List<IntVec3> deposit = new List<IntVec3>();
-                        FloodFillOre(map, pos, thing.def, visited, deposit);
-                        if (deposit.Count > 0)
-                        {
-                            oreDeposits.Add(deposit);
-                            unrevealedDeposits.Add(deposit);
-                        }
-                    }
-                }
+                Thing thing = allThings[i];
+                if (!(thing is Mineable) || !IsOre(thing.def))
+                    continue;
+
+                IntVec3 pos = thing.Position;
+                if (incrementalScanVisited.Contains(pos))
+                    continue;
+
+                List<IntVec3> deposit = new List<IntVec3>();
+                FloodFillOre(map, pos, thing.def, incrementalScanVisited, deposit);
+                if (deposit.Count > 0)
+                    incrementalScanDeposits.Add(deposit);
             }
+
             scanIndex = end;
             if (scanIndex >= allThings.Count)
             {
+                MergeIncrementalScanResults(map);
                 scanIndex = 0;
-                scanCooldown = 5000; // Wait 5000 ticks before next scan
+                scanCooldown = 5000;
+                incrementalScanDeposits.Clear();
+                incrementalScanVisited.Clear();
             }
+        }
+
+        private void MergeIncrementalScanResults(Map map)
+        {
+            HashSet<IntVec3> previouslyRevealed = new HashSet<IntVec3>(
+                revealedDeposits.Where(deposit => deposit != null).SelectMany(deposit => deposit));
+            HashSet<IntVec3> previouslyUnrevealed = new HashSet<IntVec3>(
+                unrevealedDeposits.Where(deposit => deposit != null).SelectMany(deposit => deposit));
+
+            List<List<IntVec3>> nextRevealed = new List<List<IntVec3>>();
+            List<List<IntVec3>> nextUnrevealed = new List<List<IntVec3>>();
+            oreDeposits.Clear();
+
+            foreach (List<IntVec3> deposit in incrementalScanDeposits)
+            {
+                if (deposit == null || deposit.Count == 0)
+                    continue;
+
+                oreDeposits.Add(deposit);
+                bool wasRevealed = deposit.Any(cell => previouslyRevealed.Contains(cell));
+                bool wasKnownUnrevealed = deposit.Any(cell => previouslyUnrevealed.Contains(cell));
+
+                if (wasRevealed)
+                    nextRevealed.Add(deposit);
+                else
+                    nextUnrevealed.Add(deposit);
+            }
+
+            revealedDeposits = nextRevealed;
+            unrevealedDeposits = nextUnrevealed;
+            RemoveMinedDeposits(map);
         }
 
         private void ScanForOres(Map map)
@@ -140,6 +253,7 @@ namespace ElectromagneticPulseGenerator
                     }
                 }
             }
+            scanCooldown = 5000;
         }
 
         private bool IsOre(ThingDef def)
