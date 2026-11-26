@@ -138,23 +138,62 @@ namespace ElectromagneticPulseGenerator
 
         private static IntVec3? FindClosestUnfoggedCell(Map map, List<IntVec3> deposit)
         {
-            int minDist = int.MaxValue;
-            IntVec3? best = null;
-            bool bestIsStraight = false;
+            if (deposit == null || deposit.Count == 0)
+                return null;
 
-            foreach (IntVec3 cell in map.AllCells)
+            // Expand outward from the deposit instead of rescanning every map cell
+            // and measuring every deposit cell against it.
+            HashSet<IntVec3> visited = new HashSet<IntVec3>(deposit);
+            Queue<IntVec3> frontier = new Queue<IntVec3>(deposit);
+            IntVec3? best = null;
+            int bestDistanceSquared = int.MaxValue;
+            bool bestIsStraight = false;
+            int depth = 0;
+
+            while (frontier.Count > 0)
             {
-                if (!map.fogGrid.IsFogged(cell) && cell.Standable(map))
+                int cellsAtDepth = frontier.Count;
+                for (int i = 0; i < cellsAtDepth; i++)
                 {
-                    int dist = Mathf.RoundToInt(deposit.Min(d => d.DistanceTo(cell)));
-                    bool isStraight = deposit.Any(d => d.x == cell.x || d.z == cell.z);
-                    if (dist < minDist || (dist == minDist && isStraight && !bestIsStraight))
+                    IntVec3 cell = frontier.Dequeue();
+                    if (!map.fogGrid.IsFogged(cell) && cell.Standable(map))
                     {
-                        minDist = dist;
-                        best = cell;
-                        bestIsStraight = isStraight;
+                        int distanceSquared = int.MaxValue;
+                        bool isStraight = false;
+                        foreach (IntVec3 depositCell in deposit)
+                        {
+                            int dx = depositCell.x - cell.x;
+                            int dz = depositCell.z - cell.z;
+                            int candidateDistanceSquared = dx * dx + dz * dz;
+                            if (candidateDistanceSquared < distanceSquared)
+                                distanceSquared = candidateDistanceSquared;
+                            if (depositCell.x == cell.x || depositCell.z == cell.z)
+                                isStraight = true;
+                        }
+
+                        if (distanceSquared < bestDistanceSquared ||
+                            (distanceSquared == bestDistanceSquared && isStraight && !bestIsStraight))
+                        {
+                            best = cell;
+                            bestDistanceSquared = distanceSquared;
+                            bestIsStraight = isStraight;
+                        }
+                    }
+
+                    foreach (IntVec3 offset in GenAdj.AdjacentCellsAndInside)
+                    {
+                        IntVec3 next = cell + offset;
+                        if (next.InBounds(map) && visited.Add(next))
+                            frontier.Enqueue(next);
                     }
                 }
+
+                // Every unvisited cell is at least depth + 1 cells away in
+                // Chebyshev distance, which is a lower bound for Euclidean distance.
+                if (best.HasValue && depth + 1 > Mathf.Sqrt(bestDistanceSquared))
+                    break;
+
+                depth++;
             }
 
             return best;
