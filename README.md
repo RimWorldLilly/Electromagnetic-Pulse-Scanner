@@ -18,7 +18,7 @@ When auto-mining a revealed deposit, the scanner reuses existing mining designat
 
 ### Build
 
-On Windows, run the repository-root `Build.bat` to build both supported versions. The compiled DLLs are copied to `1.6/Assemblies` and `1.7/Assemblies`. To build only one version, run `Source/1.6/Build.bat` or `Source/1.7/Build.bat`. 
+On Windows, run the repository-root `Build.bat` to build both supported versions. The compiled DLLs are copied to `1.6/Assemblies` and `1.7/Assemblies`. To build only one version, run `Source/1.6/Build.bat` or `Source/1.7/Build.bat`.
 
 The scripts detect the common Steam install paths, including `Y:\SteamLibrary\steamapps\common\RimWorld`. For a custom location, set the `RIMWORLD_DIR` environment variable or pass the game folder as the first argument. Install the .NET SDK and the .NET Framework 4.7.2 targeting pack. Close RimWorld before building so the game does not lock the output DLL.
 
