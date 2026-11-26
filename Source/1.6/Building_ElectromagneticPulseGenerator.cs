@@ -198,8 +198,6 @@ namespace ElectromagneticPulseGenerator
         {
             HashSet<IntVec3> previouslyRevealed = new HashSet<IntVec3>(
                 revealedDeposits.Where(deposit => deposit != null).SelectMany(deposit => deposit));
-            HashSet<IntVec3> previouslyUnrevealed = new HashSet<IntVec3>(
-                unrevealedDeposits.Where(deposit => deposit != null).SelectMany(deposit => deposit));
 
             List<List<IntVec3>> nextRevealed = new List<List<IntVec3>>();
             List<List<IntVec3>> nextUnrevealed = new List<List<IntVec3>>();
@@ -212,7 +210,6 @@ namespace ElectromagneticPulseGenerator
 
                 oreDeposits.Add(deposit);
                 bool wasRevealed = deposit.Any(cell => previouslyRevealed.Contains(cell));
-                bool wasKnownUnrevealed = deposit.Any(cell => previouslyUnrevealed.Contains(cell));
 
                 if (wasRevealed)
                     nextRevealed.Add(deposit);
