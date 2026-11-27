@@ -11,7 +11,7 @@
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <OutputPath>bin\\Release\\</OutputPath>
-    <RimWorldDir>Y:\SteamLibrary\steamapps\common\RimWorld</RimWorldDir>
+    <RimWorldDir>$(MSBuildThisFileDirectory)..\..\..</RimWorldDir>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
